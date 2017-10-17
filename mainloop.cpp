@@ -95,6 +95,11 @@ static constexpr auto typeAttrMap =
         ValueInterface::Unit::Watts,
         -6,
         "power"),
+    std::make_tuple(
+        hwmon::type::cpwm,
+        ValueInterface::Unit::RPMS,
+        0,
+        "pwm"),
 };
 
 auto getHwmonType(decltype(typeAttrMap)::const_reference attrs)
@@ -348,8 +353,8 @@ void MainLoop::run()
         // Iterate through all the sensors.
         for (auto& i : state)
         {
-            auto& attrs = std::get<0>(i.second);
-            if (attrs.find(hwmon::entry::input) != attrs.end())
+            //auto& attrs = std::get<0>(i.second);
+            //if (attrs.find(hwmon::entry::input) != attrs.end())
             {
                 // Read value from sensor.
                 int value;

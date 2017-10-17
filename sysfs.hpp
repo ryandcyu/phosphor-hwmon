@@ -14,7 +14,12 @@ inline std::string make_sysfs_path(const std::string& path,
 {
     using namespace std::literals;
 
-    return path + "/"s + type + id + "_"s + entry;
+    std::string st;
+    if (type.compare("pwm") == 0 && entry.compare("input") == 0)
+        st = path + "/"s + type + id;
+    else
+        st = path + "/"s + type + id + "_"s + entry;
+    return st;
 }
 
 /** @brief Return the path to the phandle file matching value in io-channels.
