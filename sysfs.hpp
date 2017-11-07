@@ -96,7 +96,7 @@ class HwmonIO
 
         /** @brief Perform formatted hwmon sysfs read.
          *
-         *  Propogates any exceptions other than ENOENT.
+         *  Propagates any exceptions other than ENOENT.
          *  ENOENT will result in a call to exit(0) in case
          *  the underlying hwmon driver is unbound and
          *  the program is inadvertently left running.
@@ -121,7 +121,7 @@ class HwmonIO
 
         /** @brief Perform formatted hwmon sysfs write.
          *
-         *  Propogates any exceptions other than ENOENT.
+         *  Propagates any exceptions other than ENOENT.
          *  ENOENT will result in a call to exit(0) in case
          *  the underlying hwmon driver is unbound and
          *  the program is inadvertently left running.

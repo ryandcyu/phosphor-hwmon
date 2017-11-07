@@ -16,6 +16,7 @@
 #include <iostream>
 #include <memory>
 #include <cstdlib>
+#include <string>
 
 #include <phosphor-logging/elog-errors.hpp>
 #include "config.h"
@@ -59,6 +60,16 @@ decltype(Thresholds<CriticalObject>::alarmLo) Thresholds<CriticalObject>::alarmL
     &CriticalObject::criticalAlarmLow;
 decltype(Thresholds<CriticalObject>::alarmHi) Thresholds<CriticalObject>::alarmHi =
     &CriticalObject::criticalAlarmHigh;
+
+// The gain and offset to adjust a value
+struct valueAdjust
+{
+    double gain = 1.0;
+    int offset = 0;
+};
+
+// Store the valueAdjust for sensors
+std::map<SensorSet::key_type, valueAdjust> sensorAdjusts;
 
 static constexpr auto typeAttrMap =
 {
@@ -147,6 +158,19 @@ auto getAttributes(const std::string& type, Attributes& attributes)
     return true;
 }
 
+int adjustValue(const SensorSet::key_type& sensor, int value)
+{
+    const auto& it = sensorAdjusts.find(sensor);
+    if (it != sensorAdjusts.end())
+    {
+        // Adjust based on gain and offset
+        value = static_cast<decltype(value)>(
+                    static_cast<double>(value) * it->second.gain
+                        + it->second.offset);
+    }
+    return value;
+}
+
 auto addValue(const SensorSet::key_type& sensor,
               const std::string& devPath,
               sysfs::hwmonio::HwmonIO& ioAccess,
@@ -180,8 +204,31 @@ auto addValue(const SensorSet::key_type& sensor,
             xyz::openbmc_project::Sensor::Device::
                 ReadFailure::CALLOUT_DEVICE_PATH(devPath.c_str()));
 
+        auto file = sysfs::make_sysfs_path(
+                ioAccess.path(),
+                sensor.first,
+                sensor.second,
+                hwmon::entry::cinput);
+
+        log<level::INFO>("Logging failing sysfs file",
+                entry("FILE=%s", file.c_str()));
+
         return static_cast<std::shared_ptr<ValueObject>>(nullptr);
     }
+
+    auto gain = getEnv("GAIN", sensor);
+    if (!gain.empty())
+    {
+        sensorAdjusts[sensor].gain = std::stod(gain);
+    }
+
+    auto offset = getEnv("OFFSET", sensor);
+    if (!offset.empty())
+    {
+        sensorAdjusts[sensor].offset = std::stoi(offset);
+    }
+
+    val = adjustValue(sensor, val);
 
     auto iface = std::make_shared<ValueObject>(bus, objPath.c_str(), deferSignals);
     iface->value(val);
@@ -244,33 +291,37 @@ void MainLoop::run()
     for (auto& i : *sensors)
     {
         std::string label;
+        std::string id;
 
         /*
          * Check if the value of the MODE_<item><X> env variable for the sensor
          * is "label", then read the sensor number from the <item><X>_label
          * file. The name of the DBUS object would be the value of the env
          * variable LABEL_<item><sensorNum>. If the MODE_<item><X> env variable
-         * does'nt exist, then the name of DBUS object is the value of the env
+         * doesn't exist, then the name of DBUS object is the value of the env
          * variable LABEL_<item><X>.
          */
         auto mode = getEnv("MODE", i.first);
         if (!mode.compare(hwmon::entry::label))
         {
-            label = getIndirectLabelEnv(
-                "LABEL", _hwmonRoot + '/' + _instance + '/', i.first);
-            if (label.empty())
+            id = getIndirectID(
+                    _hwmonRoot + '/' + _instance + '/', i.first);
+
+            if (id.empty())
             {
                 continue;
             }
         }
-        else
+
+        //In this loop, use the ID we looked up above if
+        //there was one, otherwise use the standard one.
+        id = (id.empty()) ? i.first.second : id;
+
+        // Ignore inputs without a label.
+        label = getEnv("LABEL", i.first.first, id);
+        if (label.empty())
         {
-            // Ignore inputs without a label.
-            label = getEnv("LABEL", i.first);
-            if (label.empty())
-            {
-                continue;
-            }
+            continue;
         }
 
         Attributes attrs;
@@ -296,12 +347,11 @@ void MainLoop::run()
 #endif
         }
         auto sensorValue = valueInterface->value();
-        addThreshold<WarningObject>(i.first, sensorValue, info);
-        addThreshold<CriticalObject>(i.first, sensorValue, info);
-        //TODO openbmc/openbmc#1347
-        //     Handle application restarts to set/refresh fan speed values
+        addThreshold<WarningObject>(i.first.first, id, sensorValue, info);
+        addThreshold<CriticalObject>(i.first.first, id, sensorValue, info);
+
         auto target = addTarget<hwmon::FanSpeed>(
-                i.first, ioAccess.path(), _devPath, info);
+                i.first, ioAccess, _devPath, info);
 
         if (target)
         {
@@ -370,6 +420,8 @@ void MainLoop::run()
                             sysfs::hwmonio::retries,
                             sysfs::hwmonio::delay);
 
+                    value = adjustValue(i.first, value);
+
                     auto& objInfo = std::get<ObjectInfo>(i.second);
                     auto& obj = std::get<Object>(objInfo);
 
@@ -407,6 +459,16 @@ void MainLoop::run()
                             xyz::openbmc_project::Sensor::Device::
                                 ReadFailure::CALLOUT_DEVICE_PATH(
                                     _devPath.c_str()));
+
+                    auto file = sysfs::make_sysfs_path(
+                            ioAccess.path(),
+                            i.first.first,
+                            i.first.second,
+                            hwmon::entry::cinput);
+
+                    log<level::INFO>("Logging failing sysfs file",
+                            entry("FILE=%s", file.c_str()));
+
 #ifdef REMOVE_ON_FAIL
                     destroy.push_back(i.first);
 #else

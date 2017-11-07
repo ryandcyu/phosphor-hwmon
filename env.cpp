@@ -39,11 +39,20 @@ std::string getEnv(
     return value;
 }
 
-std::string getIndirectLabelEnv(
-    const char* prefix, std::string path, const SensorSet::key_type& sensor)
+std::string getEnv(
+    const char* prefix,
+    const std::string& type,
+    const std::string& id)
 {
-    std::string key;
-    std::string value;
+    SensorSet::key_type sensor{type, id};
+    return getEnv(prefix, sensor);
+}
+
+std::string getIndirectID(
+        std::string path,
+        const SensorSet::key_type& sensor)
+{
+    std::string content;
 
     path.append(sensor.first);
     path.append(sensor.second);
@@ -51,33 +60,20 @@ std::string getIndirectLabelEnv(
     path.append(hwmon::entry::label);
 
     std::ifstream handle(path.c_str());
-    if (handle.fail())
+    if (!handle.fail())
     {
-        return value;
+        content.assign(
+                (std::istreambuf_iterator<char>(handle)),
+                (std::istreambuf_iterator<char>()));
+
+        if (!content.empty())
+        {
+            //remove the newline
+            content.pop_back();
+        }
     }
 
-    std::string content(
-        (std::istreambuf_iterator<char>(handle)),
-        (std::istreambuf_iterator<char>()));
-
-    if (content.empty())
-    {
-        return value;
-    }
-
-    content.pop_back();
-
-    key.assign(prefix);
-    key.append(1, '_');
-    key.append(sensor.first);
-    key.append(content);
-    auto env = getenv(key.c_str());
-    if (env)
-    {
-        value.assign(env);
-    }
-
-    return value;
+    return content;
 }
 
 // vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
