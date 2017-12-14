@@ -8,7 +8,7 @@
 #include "sysfs.hpp"
 #include "interface.hpp"
 
-static constexpr auto default_interval = 1000000;
+static constexpr auto default_interval = 10000000;
 
 using Object = std::map<InterfaceType, std::experimental::any>;
 using ObjectInfo = std::tuple<sdbusplus::bus::bus*, std::string, Object>;
