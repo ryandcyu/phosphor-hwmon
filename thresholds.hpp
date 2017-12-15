@@ -53,9 +53,10 @@ struct Thresholds<CriticalObject>
  *
  *  @param[in] iface - An sdbusplus server threshold instance.
  *  @param[in] value - The sensor reading to compare to thresholds.
+ *  @return : 0-normal, 1-(value<lo), 2-(value>hi)
  */
 template <typename T>
-void checkThresholds(std::experimental::any& iface, int64_t value)
+auto checkThresholds(std::experimental::any& iface, int64_t value)
 {
     auto realIface = std::experimental::any_cast<std::shared_ptr<T>>
                      (iface);
@@ -63,6 +64,12 @@ void checkThresholds(std::experimental::any& iface, int64_t value)
     auto hi = (*realIface.*Thresholds<T>::getHi)();
     (*realIface.*Thresholds<T>::alarmLo)(value < lo);
     (*realIface.*Thresholds<T>::alarmHi)(value > hi);
+    if (value > hi)
+        return 2;
+    else if (value < lo)
+        return 1;
+    else
+        return 0;
 }
 
 /** @brief addThreshold

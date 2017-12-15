@@ -17,6 +17,7 @@
 #include <memory>
 #include <cstdlib>
 #include <string>
+#include <set>
 
 #include <phosphor-logging/elog-errors.hpp>
 #include "config.h"
@@ -60,6 +61,8 @@ decltype(Thresholds<CriticalObject>::alarmLo) Thresholds<CriticalObject>::alarmL
     &CriticalObject::criticalAlarmLow;
 decltype(Thresholds<CriticalObject>::alarmHi) Thresholds<CriticalObject>::alarmHi =
     &CriticalObject::criticalAlarmHigh;
+
+static std::set<std::string> g_record_event_list;
 
 // The gain and offset to adjust a value
 struct valueAdjust
@@ -106,6 +109,11 @@ static constexpr auto typeAttrMap =
         ValueInterface::Unit::Watts,
         -6,
         "power"),
+    std::make_tuple(
+        hwmon::type::cpwm,
+        ValueInterface::Unit::RPMS,
+        0,
+        "pwm"),
 };
 
 auto getHwmonType(decltype(typeAttrMap)::const_reference attrs)
@@ -237,6 +245,35 @@ auto addValue(const SensorSet::key_type& sensor,
 
     obj[InterfaceType::VALUE] = iface;
     return iface;
+}
+
+void add_event_log(sdbusplus::bus::bus& bus,
+            const std::string event_log,
+            const std::string sensor,
+            const std::string event_key,
+            const std::string assert_msg)
+{
+    //check if even trigger assert or deassert event
+    std::string record_item_key = event_key + sensor;
+    auto record_item = g_record_event_list.find(record_item_key);
+    if (assert_msg == "Assert") {
+        if (record_item != g_record_event_list.end())
+            return;
+        g_record_event_list.insert(record_item_key);
+    } else if (assert_msg == "Deassert") {
+        if (record_item != g_record_event_list.end())
+            g_record_event_list.erase(record_item);
+        return;
+    }
+
+    auto method =  bus.new_method_call("xyz.openbmc_project.Logging",
+                                       "/xyz/openbmc_project/logging/internal/manager",
+                                       "xyz.openbmc_project.Logging.Internal.Manager",
+                                       "Commit");
+    method.append(std::uint64_t(0));
+    method.append(event_log);
+    bus.call_noreply(method);
+    return;
 }
 
 MainLoop::MainLoop(
@@ -398,8 +435,8 @@ void MainLoop::run()
         // Iterate through all the sensors.
         for (auto& i : state)
         {
-            auto& attrs = std::get<0>(i.second);
-            if (attrs.find(hwmon::entry::input) != attrs.end())
+            //auto& attrs = std::get<0>(i.second);
+            //if (attrs.find(hwmon::entry::input) != attrs.end())
             {
                 // Read value from sensor.
                 int value;
@@ -419,6 +456,7 @@ void MainLoop::run()
 
                     auto& objInfo = std::get<ObjectInfo>(i.second);
                     auto& obj = std::get<Object>(objInfo);
+                    auto result_check_threshold = 0;
 
                     for (auto& iface : obj)
                     {
@@ -434,10 +472,36 @@ void MainLoop::run()
                                 valueIface->value(value);
                                 break;
                             case InterfaceType::WARN:
-                                checkThresholds<WarningObject>(iface.second, value);
+                                result_check_threshold = checkThresholds<WarningObject>(iface.second, value);
+                                //(i.first.first+i.first.second) -> sensor type+id, ex:type-pwm , id-1
+                                switch (result_check_threshold)
+                                {
+                                    case 2: // (value>WarningHigh)
+                                        add_event_log(_bus, "xyz.openbmc_project.Sensor.Threshold.Error.WarningHigh", "ThresholdWarning", (i.first.first+i.first.second), "Assert");
+                                        break;
+                                    case 1: // (value<WarningLow)
+                                        add_event_log(_bus, "xyz.openbmc_project.Sensor.Threshold.Error.WarningLow", "ThresholdWarning", (i.first.first+i.first.second), "Assert");
+                                        break;
+                                    default:
+                                        add_event_log(_bus, "", "ThresholdWarning", (i.first.first+i.first.second), "Deassert");
+                                        break;
+                                }
                                 break;
                             case InterfaceType::CRIT:
-                                checkThresholds<CriticalObject>(iface.second, value);
+                                result_check_threshold = checkThresholds<CriticalObject>(iface.second, value);
+                                //(i.first.first+i.first.second) -> sensor type+id, ex:type-pwm , id-1
+                                switch (result_check_threshold)
+                                {
+                                    case 2: // (value>CRITHigh)
+                                        add_event_log(_bus, "xyz.openbmc_project.Sensor.Threshold.Error.CriticalHigh", "ThresholdCritical", (i.first.first+i.first.second), "Assert");
+                                        break;
+                                    case 1: // (value<CRITLow)
+                                        add_event_log(_bus, "xyz.openbmc_project.Sensor.Threshold.Error.CriticalLow", "ThresholdCritical", (i.first.first+i.first.second), "Assert");
+                                        break;
+                                    default:
+                                        add_event_log(_bus, "", "ThresholdCritical", (i.first.first+i.first.second), "Deassert");
+                                        break;
+                                }
                                 break;
                             default:
                                 break;
